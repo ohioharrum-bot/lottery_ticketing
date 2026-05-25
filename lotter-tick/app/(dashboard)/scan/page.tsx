@@ -1,11 +1,11 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { Book, Shift, ShiftEntry } from '@/types'
 import dynamic from 'next/dynamic'
 
-const Scanner = dynamic(() => import('@/components/Scanner'), { ssr: false })
+const Scanner = dynamic(() => import('@/components/ui/Scanner'), { ssr: false })
 
 export default function ScanPage() {
   const [books, setBooks] = useState<Book[]>([])
@@ -22,9 +22,9 @@ export default function ScanPage() {
   const [toast, setToast] = useState('')
   const [loading, setLoading] = useState(false)
 
-  const supabase = createClient()
+  const supabase = useMemo(() => createClient(), [])
 
-  async function fetchData() {
+  const refreshData = useCallback(async () => {
     const { data: bookData } = await supabase.from('books').select('*')
     setBooks(bookData || [])
     const { data: shiftData } = await supabase
@@ -35,9 +35,11 @@ export default function ScanPage() {
         .from('shift_entries').select('*').eq('shift_id', shiftData.id)
       setEntries(entryData || [])
     }
-  }
+  }, [supabase])
 
-  useEffect(() => { fetchData() }, [])
+  useEffect(() => {
+    refreshData()
+  }, [refreshData])
 
   function showToast(msg: string) {
     setToast(msg)
@@ -81,7 +83,7 @@ export default function ScanPage() {
         showToast(`✓ Start ticket saved for ${scannedBook.game_name}`)
         setScannedBook(null)
         setTicketNum('')
-        fetchData()
+        refreshData()
       }
     } else {
       if (!existingEntry) {
@@ -102,7 +104,7 @@ export default function ScanPage() {
         showToast(`✓ ${sold} tickets sold — $${(sold * scannedBook.ticket_price).toFixed(2)}`)
         setScannedBook(null)
         setTicketNum('')
-        fetchData()
+        refreshData()
       }
     }
     setLoading(false)
@@ -130,7 +132,7 @@ export default function ScanPage() {
       setManualBookNum('')
       setManualGame('')
       setManualPrice('')
-      fetchData()
+      refreshData()
     }
     setLoading(false)
   }
