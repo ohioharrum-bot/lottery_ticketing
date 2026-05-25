@@ -30,13 +30,17 @@ export default function HistoryPage() {
     setHistory(historyData || [])
 
     const allShifts = [...(historyData || []), ...(activeData ? [activeData] : [])]
-    const entriesMap: { [shiftId: string]: ShiftEntry[] } = {}
+    const shiftIds = allShifts.map(s => s.id)
+    
+    const { data: allEntriesData } = await supabase
+      .from('shift_entries')
+      .select('*')
+      .in('shift_id', shiftIds)
 
-    await Promise.all(allShifts.map(async shift => {
-      const { data } = await supabase
-        .from('shift_entries').select('*').eq('shift_id', shift.id)
-      entriesMap[shift.id] = data || []
-    }))
+    const entriesMap: { [shiftId: string]: ShiftEntry[] } = {}
+    allShifts.forEach(shift => {
+      entriesMap[shift.id] = (allEntriesData || []).filter(e => e.shift_id === shift.id)
+    })
 
     setAllEntries(entriesMap)
   }, [supabase])
