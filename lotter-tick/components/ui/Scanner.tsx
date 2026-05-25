@@ -1,7 +1,6 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
-import { Html5Qrcode } from 'html5-qrcode'
+import { useState } from 'react'
 
 interface ScannerProps {
   onScan: (value: string) => void
@@ -9,64 +8,55 @@ interface ScannerProps {
 }
 
 export default function Scanner({ onScan, onClose }: ScannerProps) {
-  const scannerRef = useRef<Html5Qrcode | null>(null)
+  const [manualCode, setManualCode] = useState('')
 
-  useEffect(() => {
-    let isMounted = true
-    const scanner = new Html5Qrcode('qr-reader')
-    scannerRef.current = scanner
-
-    const startScanner = async () => {
-      try {
-        await scanner.start(
-          { facingMode: 'environment' },
-          {
-            fps: 15,
-            qrbox: { width: 250, height: 250 },
-          },
-          (decodedText) => {
-            if (isMounted) {
-              onScan(decodedText)
-              scanner.stop().catch(err => console.error("Failed to stop scanner", err))
-            }
-          },
-          undefined
-        )
-        
-        if (!isMounted) {
-          await scanner.stop()
-        }
-      } catch (err) {
-        console.error("Scanner start error:", err)
-      }
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (manualCode.trim()) {
+      onScan(manualCode.trim())
     }
-
-    startScanner()
-
-    return () => {
-      isMounted = false
-      try {
-        scanner.stop().catch(() => {})
-      } catch (e) {}
-    }
-  }, [onScan])
+  }
 
   return (
-    <div className="fixed inset-0 bg-black z-50 flex flex-col">
-      <div className="flex items-center justify-between px-4 py-4">
-        <p className="text-white text-sm font-medium">Scan QR code on the book</p>
-        <button
-          onClick={onClose}
-          className="text-white text-sm border border-white/30 px-3 py-1.5 rounded-lg"
-        >
-          Cancel
-        </button>
-      </div>
-      <div id="qr-reader" className="flex-1" />
-      <div className="px-4 py-6">
-        <p className="text-white/50 text-xs text-center">
-          Point at the QR code sticker on the book
-        </p>
+    <div className="flex flex-col items-center justify-center p-4 h-full">
+      <div className="w-full max-w-sm bg-white rounded-2xl border border-slate-200 p-8 shadow-sm">
+        <div className="text-center mb-8">
+          <h2 className="text-xl font-bold text-slate-900">Manual Entry</h2>
+          <p className="text-sm text-slate-500 mt-2">Enter the code from the book</p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5 ml-1">
+              Book / Ticket Code
+            </label>
+            <input
+              type="text"
+              autoFocus
+              placeholder="Enter code here..."
+              value={manualCode}
+              onChange={(e) => setManualCode(e.target.value)}
+              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-900 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
+            />
+          </div>
+
+          <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex-1 py-3 text-slate-600 font-semibold text-sm hover:bg-slate-100 rounded-xl transition-all"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={!manualCode.trim()}
+              className="flex-1 py-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl text-sm font-semibold shadow-lg shadow-blue-500/30 transition-all active:scale-[0.98]"
+            >
+              Confirm
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   )
