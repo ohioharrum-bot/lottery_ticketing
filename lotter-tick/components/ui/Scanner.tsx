@@ -25,14 +25,14 @@ export default function Scanner({ onScan, onClose }: ScannerProps) {
             qrbox: { width: 250, height: 250 },
           },
           (decodedText) => {
-            // Success callback
-            onScan(decodedText)
-            scanner.stop().catch(err => console.error("Failed to stop scanner", err))
+            if (isMounted) {
+              onScan(decodedText)
+              scanner.stop().catch(err => console.error("Failed to stop scanner", err))
+            }
           },
           undefined
         )
         
-        // If unmounted while starting, stop it now
         if (!isMounted) {
           await scanner.stop()
         }
