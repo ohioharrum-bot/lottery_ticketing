@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { Book, Shift, ShiftEntry } from '@/types'
 
@@ -16,6 +16,7 @@ export default function ScanPage() {
   const [newPrice, setNewPrice] = useState('')
   const [loading, setLoading] = useState(false)
   const [toast, setToast] = useState('')
+  const inputRef = useRef<HTMLInputElement>(null)
 
   const supabase = createClient()
 
@@ -36,25 +37,38 @@ export default function ScanPage() {
 
   useEffect(() => { fetchData() }, [])
 
+  // keep input focused always
+  useEffect(() => {
+    inputRef.current?.focus()
+  }, [entries, showAddForm])
+
   function showToast(msg: string) {
     setToast(msg)
     setTimeout(() => setToast(''), 2500)
   }
 
-  async function handleSubmit() {
+  async function handleSubmit(rawInput?: string) {
+    const val = rawInput || input
     if (!activeShift) { showToast('Start a shift first'); return }
-    if (!input.trim()) { showToast('Enter barcode'); return }
+    if (!val.trim()) { showToast('Scan or enter barcode'); return }
 
-    // parse barcode: 1092-0018660-002-3
-    const parts = input.trim().split('-')
-    const bookNum = parts[0]
-    const ticketNum = parseInt(parts[parts.length - 2])
+    // strip dashes, take first 14 characters
+    const barcode = val.trim().replace(/-/g, '').substring(0, 14)
+    const bookNum = barcode.substring(0, 4)
+    const ticketNum = parseInt(barcode.substring(11, 14))
+
+    if (!bookNum || isNaN(ticketNum)) {
+      showToast('Invalid barcode')
+      setInput('')
+      return
+    }
 
     const book = books.find(b => b.book_number === bookNum)
 
     if (!book) {
       setNewBookNum(bookNum)
       setShowAddForm(true)
+      setInput('')
       return
     }
 
@@ -64,6 +78,7 @@ export default function ScanPage() {
     if (mode === 'start') {
       if (existingEntry) {
         showToast(`${book.game_name} already started`)
+        setInput('')
         setLoading(false)
         return
       }
@@ -76,15 +91,19 @@ export default function ScanPage() {
         showToast(`✓ Start ticket ${ticketNum} saved — ${book.game_name}`)
         setInput('')
         fetchData()
+      } else {
+        showToast('Error saving')
       }
     } else {
       if (!existingEntry) {
         showToast(`Log start ticket for ${book.game_name} first`)
+        setInput('')
         setLoading(false)
         return
       }
       if (ticketNum <= existingEntry.start_ticket) {
         showToast('End ticket must be higher than start')
+        setInput('')
         setLoading(false)
         return
       }
@@ -97,9 +116,19 @@ export default function ScanPage() {
         showToast(`✓ ${sold} tickets sold — $${cash.toFixed(2)}`)
         setInput('')
         fetchData()
+      } else {
+        showToast('Error saving')
       }
     }
     setLoading(false)
+  }
+
+  function handleInputChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const val = e.target.value.replace(/-/g, '').substring(0, 14)
+    setInput(val)
+    if (val.length === 14) {
+      setTimeout(() => handleSubmit(val), 100)
+    }
   }
 
   async function addBook() {
@@ -117,13 +146,14 @@ export default function ScanPage() {
       total_tickets: 300,
     })
     if (!error) {
-      showToast(`Book ${newBookNum} added — enter barcode again`)
+      showToast(`Book ${newBookNum} added — scan again`)
       setShowAddForm(false)
       setNewBookNum('')
       setNewGameName('')
       setNewPrice('')
-      setInput('')
       fetchData()
+    } else {
+      showToast('Error adding book')
     }
     setLoading(false)
   }
@@ -146,7 +176,8 @@ export default function ScanPage() {
 
       {activeShift && (
         <div className="bg-green-50 text-green-700 text-sm px-3 py-2.5 rounded-lg mb-4">
-          Shift active · Cash so far: <span className="font-semibold">${totalCash.toFixed(2)}</span>
+          Shift active · Cash so far:{' '}
+          <span className="font-semibold">${totalCash.toFixed(2)}</span>
         </div>
       )}
 
@@ -174,31 +205,40 @@ export default function ScanPage() {
         </button>
       </div>
 
-      {/* main input */}
+      {/* scan input */}
       {!showAddForm && (
         <div className="bg-white rounded-xl border border-gray-200 p-4 mb-4">
           <p className="text-xs text-gray-400 mb-2">
-            Enter barcode number from ticket
+            Scan barcode or type manually
           </p>
           <input
+            ref={inputRef}
             type="text"
-            placeholder="e.g. 1092-0018660-002-3"
+            placeholder="Scan or type barcode..."
             value={input}
-            onChange={e => setInput(e.target.value)}
+            onChange={handleInputChange}
             onKeyDown={e => e.key === 'Enter' && handleSubmit()}
             className="w-full px-3 py-3 border border-gray-200 rounded-lg text-sm outline-none focus:border-gray-400 mb-3"
+            autoFocus
           />
           <button
-            onClick={handleSubmit}
+            onClick={() => inputRef.current?.focus()}
+            disabled={!activeShift}
+            className="w-full py-4 bg-gray-900 text-white rounded-xl text-base font-medium disabled:opacity-50 mb-3"
+          >
+            📷 Tap to Scan
+          </button>
+          <button
+            onClick={() => handleSubmit()}
             disabled={loading || !activeShift}
-            className="w-full py-3 bg-gray-900 text-white rounded-lg text-sm font-medium disabled:opacity-50"
+            className="w-full py-3 bg-gray-700 text-white rounded-lg text-sm font-medium disabled:opacity-50"
           >
             {loading ? 'Saving...' : mode === 'start' ? 'Log Start Ticket' : 'Log End Ticket'}
           </button>
         </div>
       )}
 
-      {/* add book form — shows when book not found */}
+      {/* add book form */}
       {showAddForm && (
         <div className="bg-white rounded-xl border border-amber-200 p-4 mb-4">
           <p className="text-sm font-medium mb-1">Book {newBookNum} not found</p>
@@ -237,7 +277,7 @@ export default function ScanPage() {
         </div>
       )}
 
-      {/* this shift history */}
+      {/* this shift entries */}
       {entries.length > 0 && (
         <>
           <p className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-3">
@@ -263,7 +303,9 @@ export default function ScanPage() {
                     <div className="text-right">
                       {sold !== null ? (
                         <>
-                          <p className="text-sm font-semibold text-green-600">${cash!.toFixed(2)}</p>
+                          <p className="text-sm font-semibold text-green-600">
+                            ${cash!.toFixed(2)}
+                          </p>
                           <p className="text-xs text-gray-400">{sold} sold</p>
                         </>
                       ) : (
