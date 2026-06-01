@@ -10,6 +10,8 @@ const Scanner = dynamic<{ onScan: (decoded: string) => void; onClose: () => void
   { ssr: false }
 )
 
+const supabase = createClient()
+
 export default function SetupPage() {
   const [books, setBooks] = useState<Book[]>([])
   const [bookNumber, setBookNumber] = useState('')
@@ -21,21 +23,19 @@ export default function SetupPage() {
   const [toast, setToast] = useState('')
   const [showScanner, setShowScanner] = useState(false)
 
-  const supabase = createClient()
-
   const fetchBooks = useCallback(async () => {
+    // Ensure session is loaded
+    await supabase.auth.getUser()
+
     const { data } = await supabase
       .from('books')
       .select('*')
       .order('created_at', { ascending: false })
     setBooks(data || [])
-  }, [supabase])
+  }, [])
 
   useEffect(() => {
-    const load = async () => {
-      await fetchBooks()
-    }
-    load()
+    fetchBooks()
   }, [fetchBooks])
 
   const showToast = useCallback((msg: string) => {

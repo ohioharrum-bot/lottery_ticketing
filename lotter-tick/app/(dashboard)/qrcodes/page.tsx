@@ -5,17 +5,21 @@ import { createClient } from '@/lib/supabase/client'
 import QRGenerator from '@/components/QRGenerator'
 import { Book } from '@/types'
 
+const supabase = createClient()
+
 export default function QRCodesPage() {
   const [books, setBooks] = useState<Book[]>([])
-  const supabase = createClient()
 
   useEffect(() => {
     const fetchBooks = async () => {
+      // Ensure session is loaded
+      await supabase.auth.getUser()
+
       const { data } = await supabase.from('books').select('*').order('book_number')
       setBooks(data || [])
     }
     fetchBooks()
-  }, [supabase])
+  }, [])
 
   return (
     <div className="px-4 pt-6 pb-24">

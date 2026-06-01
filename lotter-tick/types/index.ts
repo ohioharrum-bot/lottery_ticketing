@@ -14,6 +14,9 @@ export type Shift = {
   started_at: string
   ended_at: string | null
   is_active: boolean
+  tickets_cashed: number
+  turn_number: number
+  person_name: string
 }
 
 export type ShiftEntry = {
@@ -22,5 +25,6 @@ export type ShiftEntry = {
   book_id: string
   start_ticket: number
   end_ticket: number | null
+  payment_type: 'cash' | 'card' | 'online'
   created_at: string
 }

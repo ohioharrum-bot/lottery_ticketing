@@ -7,8 +7,13 @@ export default async function DashboardPage() {
   const { data: books } = await supabase
     .from('books').select('*').order('created_at', { ascending: false })
 
-  const { data: activeShift } = await supabase
-    .from('shifts').select('*').eq('is_active', true).maybeSingle()
+  const { data: shifts } = await supabase
+    .from('shifts')
+    .select('*')
+    .eq('is_active', true)
+    .order('started_at', { ascending: false })
+
+  const activeShift = shifts && shifts.length > 0 ? shifts[0] : null
 
   let entries: ShiftEntry[] = []
   if (activeShift) {
@@ -34,82 +39,116 @@ export default async function DashboardPage() {
   const totalSold = entries.reduce((sum, e) => sum + getSold(e), 0)
   const pendingBooks = entries.filter(e => !e.end_ticket).length
 
+  const stats = [
+    { label: 'Cash This Shift', value: `$${totalCash.toFixed(2)}`, accent: true },
+    { label: 'Tickets Sold', value: `${totalSold}`, accent: false },
+    { label: 'Total Books', value: `${(books || []).length}`, accent: false },
+    { label: 'Pending Scan', value: `${pendingBooks}`, accent: false, warn: pendingBooks > 0 },
+  ]
+
   return (
-    <div className="px-4 pt-6">
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-xl font-semibold">Dashboard</h1>
-        <span className={`text-xs font-medium px-3 py-1 rounded-full ${
-          activeShift ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
+    <div className="p-6 max-w-5xl">
+      <style>{`
+        @keyframes fade-in { from { opacity:0 } to { opacity:1 } }
+        @keyframes slide-up { from { opacity:0; transform:translateY(10px) } to { opacity:1; transform:translateY(0) } }
+        .ani-fade { animation: fade-in 0.35s ease both }
+        .ani-up { animation: slide-up 0.35s ease both }
+      `}</style>
+
+      {/* Header */}
+      <div className="flex items-center justify-between mb-6 ani-fade">
+        <div>
+          <p className="text-[10px] text-[#444] uppercase tracking-[0.15em] mb-0.5">Overview</p>
+          <h1 className="text-xl font-bold text-white tracking-tight">Dashboard</h1>
+        </div>
+        <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full border text-[11px] font-semibold ${
+          activeShift
+            ? 'bg-[#c6f135]/10 text-[#c6f135] border-[#c6f135]/25'
+            : 'bg-white/[0.03] text-[#444] border-white/[0.06]'
         }`}>
-          {activeShift ? 'Shift Active' : 'No Shift'}
-        </span>
-      </div>
-
-      <div className="grid grid-cols-2 gap-3 mb-6">
-        <div className="bg-white rounded-xl border border-gray-200 p-4">
-          <p className="text-xs text-gray-500 mb-1">Cash this shift</p>
-          <p className="text-2xl font-semibold text-green-600">${totalCash.toFixed(2)}</p>
-        </div>
-        <div className="bg-white rounded-xl border border-gray-200 p-4">
-          <p className="text-xs text-gray-500 mb-1">Tickets sold</p>
-          <p className="text-2xl font-semibold text-blue-600">{totalSold}</p>
-        </div>
-        <div className="bg-white rounded-xl border border-gray-200 p-4">
-          <p className="text-xs text-gray-500 mb-1">Total books</p>
-          <p className="text-2xl font-semibold">{(books || []).length}</p>
-        </div>
-        <div className="bg-white rounded-xl border border-gray-200 p-4">
-          <p className="text-xs text-gray-500 mb-1">Pending end scan</p>
-          <p className={`text-2xl font-semibold ${pendingBooks > 0 ? 'text-amber-500' : 'text-gray-900'}`}>
-            {pendingBooks}
-          </p>
+          <span className={`w-1.5 h-1.5 rounded-full ${activeShift ? 'bg-[#c6f135]' : 'bg-[#333]'}`} />
+          {activeShift ? 'Shift Active' : 'No Active Shift'}
         </div>
       </div>
 
-      {entries.length > 0 && (
-        <>
-          <p className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-3">Books this shift</p>
-          <div className="flex flex-col gap-2">
-            {entries.map(entry => {
-              const book = (books || []).find(b => b.id === entry.book_id)
-              if (!book) return null
-              const sold = getSold(entry)
-              const cash = getCash(entry, book)
-              return (
-                <div key={entry.id} className="bg-white rounded-xl border border-gray-200 px-4 py-3">
-                  <div className="flex justify-between items-center">
-                    <div>
-                      <p className="text-sm font-medium">{book.game_name}</p>
-                      <p className="text-xs text-gray-400">
-                        Book #{book.book_number} · ${book.ticket_price}/ticket
-                      </p>
-                      <p className="text-xs text-gray-400">
-                        Tickets: {entry.start_ticket} → {entry.end_ticket ?? '?'}
-                      </p>
-                    </div>
-                    <div className="text-right">
-                      {entry.end_ticket ? (
-                        <>
-                          <p className="text-sm font-semibold text-green-600">${cash.toFixed(2)}</p>
-                          <p className="text-xs text-gray-400">{sold} sold</p>
-                        </>
-                      ) : (
-                        <span className="text-xs bg-amber-50 text-amber-600 px-2 py-1 rounded-full">
-                          needs end scan
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              )
-            })}
+      {/* Stat Cards */}
+      <div className="grid grid-cols-4 gap-3 mb-5">
+        {stats.map((stat, i) => (
+          <div
+            key={stat.label}
+            className="ani-up bg-[#141414] border border-white/[0.05] rounded-xl p-3.5"
+            style={{ animationDelay: `${i * 55}ms` }}
+          >
+            <p className="text-[10px] text-[#444] uppercase tracking-[0.12em] mb-2">{stat.label}</p>
+            <p className={`text-xl font-bold ${
+              stat.accent ? 'text-[#c6f135]' : stat.warn ? 'text-orange-400' : 'text-white'
+            }`}>{stat.value}</p>
           </div>
-        </>
+        ))}
+      </div>
+
+      {/* Active shift banner */}
+      {activeShift && (
+        <div className="ani-up bg-[#141414] border border-[#c6f135]/15 rounded-xl px-4 py-3 mb-5 flex items-center justify-between" style={{ animationDelay: '230ms' }}>
+          <div className="flex items-center gap-3">
+            <div className="w-1 h-7 bg-[#c6f135] rounded-full" />
+            <div>
+              <p className="text-xs font-semibold text-white">Turn {activeShift.turn_number} — {activeShift.person_name}</p>
+              <p className="text-[11px] text-[#444]">
+                Since {new Date(activeShift.started_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              </p>
+            </div>
+          </div>
+          <p className="text-sm font-bold text-[#c6f135]">${totalCash.toFixed(2)}</p>
+        </div>
+      )}
+
+      {/* Books table */}
+      {entries.length > 0 && (
+        <div className="ani-up" style={{ animationDelay: '290ms' }}>
+          <p className="text-[10px] text-[#444] uppercase tracking-[0.15em] mb-3">Books This Shift</p>
+          <div className="bg-[#141414] border border-white/[0.05] rounded-xl overflow-hidden">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-white/[0.05]">
+                  {['Game', 'Book #', 'Price', 'Tickets', 'Revenue', 'Status'].map(h => (
+                    <th key={h} className="text-left text-[10px] text-[#444] uppercase tracking-[0.1em] px-4 py-2.5 font-medium">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {entries.map((entry) => {
+                  const book = (books || []).find(b => b.id === entry.book_id)
+                  if (!book) return null
+                  const sold = getSold(entry)
+                  const cash = getCash(entry, book)
+                  return (
+                    <tr key={entry.id} className="border-b border-white/[0.03] last:border-0 hover:bg-white/[0.02] transition-colors">
+                      <td className="px-4 py-2.5 text-sm font-medium text-white">{book.game_name}</td>
+                      <td className="px-4 py-2.5 text-xs text-[#555]">#{book.book_number}</td>
+                      <td className="px-4 py-2.5 text-xs text-[#555]">${book.ticket_price}</td>
+                      <td className="px-4 py-2.5 text-xs text-[#555]">{entry.start_ticket} → {entry.end_ticket ?? '?'}</td>
+                      <td className="px-4 py-2.5 text-sm font-semibold text-[#c6f135]">
+                        {entry.end_ticket ? `$${cash.toFixed(2)}` : '—'}
+                      </td>
+                      <td className="px-4 py-2.5">
+                        {entry.end_ticket
+                          ? <span className="text-[10px] bg-[#c6f135]/10 text-[#c6f135] border border-[#c6f135]/20 px-2 py-0.5 rounded-full">Done</span>
+                          : <span className="text-[10px] bg-orange-500/10 text-orange-400 border border-orange-500/20 px-2 py-0.5 rounded-full">Pending</span>
+                        }
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
       )}
 
       {(!books || books.length === 0) && (
-        <div className="text-center py-16 text-gray-400 text-sm">
-          No books yet. Go to Setup to add books.
+        <div className="text-center py-20 text-[#333] text-sm">
+          No books yet — go to Setup to add books.
         </div>
       )}
     </div>
