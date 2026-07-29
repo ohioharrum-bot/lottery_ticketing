@@ -1,156 +1,263 @@
+import Link from 'next/link'
+import { Sidebar } from '@/components/dashboard/Sidebar'
+import { StatCard } from '@/components/dashboard/StatCard'
+import { SalesChart, DataPoint } from '@/components/dashboard/SalesChart'
+import { TopGamesPanel, GameItem } from '@/components/dashboard/TopGamesPanel'
+import { ActiveBooksTable, ActiveBookRow } from '@/components/dashboard/ActiveBooksTable'
+import { ActivityFeed, FeedItem } from '@/components/dashboard/ActivityFeed'
 import { createClient } from '@/lib/supabase/server'
-import { Book, ShiftEntry } from '@/types'
+import { fetchActiveTurn, fetchTurnEntries } from '@/lib/supabase/dbHelpers'
 
 export default async function DashboardPage() {
-  const supabase = await createClient()
+  let activeTurn: any = null
+  let booksCount = 0
+  let cashThisShift = 0
+  let ticketsSold = 0
+  let pendingScan = 0
+  let lowStockCount = 0
 
-  const { data: books } = await supabase
-    .from('books').select('*').order('created_at', { ascending: false })
+  let activeBooksRows: ActiveBookRow[] = []
+  let topGames: GameItem[] = []
+  let activityFeed: FeedItem[] = []
+  let chartData: DataPoint[] = []
 
-  const { data: shifts } = await supabase
-    .from('shifts')
-    .select('*')
-    .eq('is_active', true)
-    .order('started_at', { ascending: false })
+  try {
+    const supabase = await createClient()
+    const { turn } = await fetchActiveTurn(supabase)
+    activeTurn = turn
 
-  const activeShift = shifts && shifts.length > 0 ? shifts[0] : null
+    // Fetch all books
+    const { data: booksData } = await supabase
+      .from('books')
+      .select('*')
+      .order('created_at', { ascending: false })
 
-  let entries: ShiftEntry[] = []
-  if (activeShift) {
-    const { data } = await supabase
-      .from('shift_entries').select('*').eq('shift_id', activeShift.id)
-    entries = data || []
+    const books = booksData || []
+    booksCount = books.length
+
+    // Fetch entries for active turn if exists
+    let activeEntries: any[] = []
+    if (activeTurn) {
+      activeEntries = await fetchTurnEntries(supabase, activeTurn.id)
+    }
+
+    // Fetch all turn entries across all turns to calculate book sales & top games
+    let allEntries: any[] = []
+    try {
+      const { data: eData } = await supabase.from('turn_entries').select('*')
+      allEntries = eData || []
+    } catch (e) {
+      // Fallback
+    }
+
+    // Process active turn numbers
+    activeEntries.forEach((e) => {
+      const book = books.find((b: any) => b.id === e.book_id)
+      const price = book ? Number(book.ticket_price || 0) : 0
+
+      if (e.end_ticket !== null && e.end_ticket !== undefined) {
+        const sold = Math.max(0, e.end_ticket - e.start_ticket)
+        ticketsSold += sold
+        cashThisShift += sold * price
+      } else {
+        pendingScan += 1
+      }
+    })
+
+    // Process books remaining and active book list
+    books.forEach((book: any) => {
+      const bookEntries = allEntries.filter((e) => e.book_id === book.id)
+      let soldForBook = 0
+      bookEntries.forEach((e) => {
+        if (e.end_ticket !== null && e.end_ticket !== undefined) {
+          soldForBook += Math.max(0, e.end_ticket - e.start_ticket)
+        }
+      })
+
+      const total = Number(book.total_tickets || 100)
+      const remaining = Math.max(0, total - soldForBook)
+
+      let status: 'Active' | 'Low Stock' | 'Closed' = 'Active'
+      if (remaining <= 0) {
+        status = 'Closed'
+      } else if (remaining <= total * 0.15) {
+        status = 'Low Stock'
+        lowStockCount += 1
+      }
+
+      activeBooksRows.push({
+        id: book.id,
+        bookCode: book.book_number,
+        gameName: book.game_name,
+        status,
+        sold: soldForBook,
+        remainingText: `${remaining} / ${total}`,
+      })
+    })
+
+    // Process Top Games by Revenue
+    const gameMap: Record<string, { price: number; revenue: number }> = {}
+    allEntries.forEach((e) => {
+      if (e.end_ticket !== null && e.end_ticket !== undefined) {
+        const book = books.find((b: any) => b.id === e.book_id)
+        if (book) {
+          const game = book.game_name || 'Lottery Game'
+          const price = Number(book.ticket_price || 0)
+          const sold = Math.max(0, e.end_ticket - e.start_ticket)
+          const rev = sold * price
+
+          if (!gameMap[game]) {
+            gameMap[game] = { price, revenue: 0 }
+          }
+          gameMap[game].revenue += rev
+        }
+      }
+    })
+
+    const sortedGames = Object.entries(gameMap)
+      .map(([name, data]) => ({ name, ...data }))
+      .sort((a, b) => b.revenue - a.revenue)
+
+    const maxRev = sortedGames.length > 0 ? sortedGames[0].revenue : 1
+    topGames = sortedGames.map((g, idx) => ({
+      rank: String(idx + 1).padStart(2, '0'),
+      name: g.name,
+      price: `$${g.price.toFixed(2)}`,
+      percentage: Math.round((g.revenue / (maxRev || 1)) * 100),
+      value: `$${g.revenue.toLocaleString('en-US', { minimumFractionDigits: 2 })}`,
+    }))
+
+    // Build Activity Feed from recent books and turns
+    const activityList: FeedItem[] = []
+    if (activeTurn) {
+      activityList.push({
+        id: `turn-${activeTurn.id}`,
+        text: (
+          <>
+            Turn active for <b>{activeTurn.person_name || 'Clerk'}</b>
+          </>
+        ),
+        time: activeTurn.started_at
+          ? new Date(activeTurn.started_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          : 'Active',
+      })
+    }
+
+    books.slice(0, 3).forEach((b: any) => {
+      activityList.push({
+        id: `book-${b.id}`,
+        text: (
+          <>
+            Book <b>{b.book_number}</b> registered ({b.game_name})
+          </>
+        ),
+        time: b.created_at
+          ? new Date(b.created_at).toLocaleDateString()
+          : 'Recent',
+      })
+    })
+
+    activityFeed = activityList
+  } catch (e) {
+    console.error(e)
   }
 
-  function getSold(entry: ShiftEntry) {
-    if (!entry.end_ticket) return 0
-    return entry.end_ticket - entry.start_ticket
-  }
-
-  function getCash(entry: ShiftEntry, book: Book) {
-    return getSold(entry) * book.ticket_price
-  }
-
-  const totalCash = entries.reduce((sum, e) => {
-    const book = (books || []).find(b => b.id === e.book_id)
-    return sum + (book ? getCash(e, book) : 0)
-  }, 0)
-
-  const totalSold = entries.reduce((sum, e) => sum + getSold(e), 0)
-  const pendingBooks = entries.filter(e => !e.end_ticket).length
-
-  const stats = [
-    { label: 'Cash This Shift', value: `$${totalCash.toFixed(2)}`, accent: true },
-    { label: 'Tickets Sold', value: `${totalSold}`, accent: false },
-    { label: 'Total Books', value: `${(books || []).length}`, accent: false },
-    { label: 'Pending Scan', value: `${pendingBooks}`, accent: false, warn: pendingBooks > 0 },
-  ]
+  const currentDateStr = new Date().toLocaleDateString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+  })
 
   return (
-    <div className="p-6 max-w-5xl">
-      <style>{`
-        @keyframes fade-in { from { opacity:0 } to { opacity:1 } }
-        @keyframes slide-up { from { opacity:0; transform:translateY(10px) } to { opacity:1; transform:translateY(0) } }
-        .ani-fade { animation: fade-in 0.35s ease both }
-        .ani-up { animation: slide-up 0.35s ease both }
-      `}</style>
-
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6 ani-fade">
-        <div>
-          <p className="text-[10px] text-[#444] uppercase tracking-[0.15em] mb-0.5">Overview</p>
-          <h1 className="text-xl font-bold text-white tracking-tight">Dashboard</h1>
-        </div>
-        <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full border text-[11px] font-semibold ${
-          activeShift
-            ? 'bg-[#c6f135]/10 text-[#c6f135] border-[#c6f135]/25'
-            : 'bg-white/[0.03] text-[#444] border-white/[0.06]'
-        }`}>
-          <span className={`w-1.5 h-1.5 rounded-full ${activeShift ? 'bg-[#c6f135]' : 'bg-[#333]'}`} />
-          {activeShift ? 'Shift Active' : 'No Active Shift'}
-        </div>
-      </div>
-
-      {/* Stat Cards */}
-      <div className="grid grid-cols-4 gap-3 mb-5">
-        {stats.map((stat, i) => (
-          <div
-            key={stat.label}
-            className="ani-up bg-[#141414] border border-white/[0.05] rounded-xl p-3.5"
-            style={{ animationDelay: `${i * 55}ms` }}
-          >
-            <p className="text-[10px] text-[#444] uppercase tracking-[0.12em] mb-2">{stat.label}</p>
-            <p className={`text-xl font-bold ${
-              stat.accent ? 'text-[#c6f135]' : stat.warn ? 'text-orange-400' : 'text-white'
-            }`}>{stat.value}</p>
+    <div className="app">
+      <Sidebar activeItem="Dashboard" />
+      <main className="main">
+        <div className="topbar">
+          <div>
+            <h1>Dashboard</h1>
+            <div className="sub">{currentDateStr}</div>
           </div>
-        ))}
-      </div>
-
-      {/* Active shift banner */}
-      {activeShift && (
-        <div className="ani-up bg-[#141414] border border-[#c6f135]/15 rounded-xl px-4 py-3 mb-5 flex items-center justify-between" style={{ animationDelay: '230ms' }}>
-          <div className="flex items-center gap-3">
-            <div className="w-1 h-7 bg-[#c6f135] rounded-full" />
-            <div>
-              <p className="text-xs font-semibold text-white">Turn {activeShift.turn_number} — {activeShift.person_name}</p>
-              <p className="text-[11px] text-[#444]">
-                Since {new Date(activeShift.started_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-              </p>
+          <div className="topbar-right">
+            <div className="shift-label">
+              Status <b>{activeTurn ? 'Active' : 'No Turn'}</b>
             </div>
-          </div>
-          <p className="text-sm font-bold text-[#c6f135]">${totalCash.toFixed(2)}</p>
-        </div>
-      )}
-
-      {/* Books table */}
-      {entries.length > 0 && (
-        <div className="ani-up" style={{ animationDelay: '290ms' }}>
-          <p className="text-[10px] text-[#444] uppercase tracking-[0.15em] mb-3">Books This Shift</p>
-          <div className="bg-[#141414] border border-white/[0.05] rounded-xl overflow-hidden">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-white/[0.05]">
-                  {['Game', 'Book #', 'Price', 'Tickets', 'Revenue', 'Status'].map(h => (
-                    <th key={h} className="text-left text-[10px] text-[#444] uppercase tracking-[0.1em] px-4 py-2.5 font-medium">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {entries.map((entry) => {
-                  const book = (books || []).find(b => b.id === entry.book_id)
-                  if (!book) return null
-                  const sold = getSold(entry)
-                  const cash = getCash(entry, book)
-                  return (
-                    <tr key={entry.id} className="border-b border-white/[0.03] last:border-0 hover:bg-white/[0.02] transition-colors">
-                      <td className="px-4 py-2.5 text-sm font-medium text-white">{book.game_name}</td>
-                      <td className="px-4 py-2.5 text-xs text-[#555]">#{book.book_number}</td>
-                      <td className="px-4 py-2.5 text-xs text-[#555]">${book.ticket_price}</td>
-                      <td className="px-4 py-2.5 text-xs text-[#555]">{entry.start_ticket} → {entry.end_ticket ?? '?'}</td>
-                      <td className="px-4 py-2.5 text-sm font-semibold text-[#c6f135]">
-                        {entry.end_ticket ? `$${cash.toFixed(2)}` : '—'}
-                      </td>
-                      <td className="px-4 py-2.5">
-                        {entry.end_ticket
-                          ? <span className="text-[10px] bg-[#c6f135]/10 text-[#c6f135] border border-[#c6f135]/20 px-2 py-0.5 rounded-full">Done</span>
-                          : <span className="text-[10px] bg-orange-500/10 text-orange-400 border border-orange-500/20 px-2 py-0.5 rounded-full">Pending</span>
-                        }
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
+            <Link href="/history" className="btn">
+              Manage Turns
+            </Link>
+            <Link href="/setup" className="btn btn-primary">
+              + New Book
+            </Link>
           </div>
         </div>
-      )}
 
-      {(!books || books.length === 0) && (
-        <div className="text-center py-20 text-[#333] text-sm">
-          No books yet — go to Setup to add books.
+        {/* STAT CARDS */}
+        <div className="stat-grid">
+          <StatCard
+            label="Cash This Shift"
+            value={`$${cashThisShift.toLocaleString('en-US', { minimumFractionDigits: 2 })}`}
+            iconBg="rgba(47,111,237,.12)"
+            iconSvg={
+              <svg viewBox="0 0 24 24" fill="none" stroke="#2F6FED" strokeWidth="2">
+                <path d="M12 1v22M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6" />
+              </svg>
+            }
+            deltaText={activeTurn ? "Active shift cash" : "No active shift"}
+            deltaType="up"
+          />
+
+          <StatCard
+            label="Tickets Sold"
+            value={`${ticketsSold}`}
+            iconBg="rgba(111,161,255,.12)"
+            iconSvg={
+              <svg viewBox="0 0 24 24" fill="none" stroke="#6FA1FF" strokeWidth="2">
+                <path d="M3 8a2 2 0 012-2h14a2 2 0 012 2v2a2 2 0 01-2 2H5a2 2 0 01-2-2v-2a2 2 0 000-4z" />
+              </svg>
+            }
+            deltaText={activeTurn ? "Shift ticket total" : "No active shift"}
+            deltaType="up"
+          />
+
+          <StatCard
+            label="Total Books"
+            value={`${booksCount}`}
+            iconBg="rgba(255,185,61,.12)"
+            iconSvg={
+              <svg viewBox="0 0 24 24" fill="none" stroke="#FFB93D" strokeWidth="2">
+                <path d="M4 4h16v16H4zM4 9h16" />
+              </svg>
+            }
+            deltaText={`${lowStockCount} low stock`}
+            deltaType="flat"
+          />
+
+          <StatCard
+            label="Pending Scan"
+            value={`${pendingScan}`}
+            iconBg="rgba(255,92,92,.12)"
+            iconSvg={
+              <svg viewBox="0 0 24 24" fill="none" stroke="#FF5C5C" strokeWidth="2">
+                <rect x="3" y="3" width="18" height="14" rx="2" />
+                <path d="M8 21h8" />
+              </svg>
+            }
+            deltaText={pendingScan > 0 ? "Needs end scan" : "All scans clear"}
+            deltaType={pendingScan > 0 ? "down" : "flat"}
+          />
         </div>
-      )}
+
+        {/* SALES CHART + TOP GAMES */}
+        <div className="grid-2">
+          <SalesChart data={chartData} />
+          <TopGamesPanel games={topGames} />
+        </div>
+
+        {/* BOOKS + ACTIVITY Feed */}
+        <div className="grid-3">
+          <ActiveBooksTable books={activeBooksRows} />
+          <ActivityFeed items={activityFeed} />
+        </div>
+      </main>
     </div>
   )
 }

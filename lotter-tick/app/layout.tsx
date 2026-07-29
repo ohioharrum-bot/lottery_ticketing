@@ -1,12 +1,10 @@
 import type { Metadata } from 'next'
-import { Geist } from 'next/font/google'
+import { poppins } from './fonts'
 import './globals.css'
 
-const geist = Geist({ subsets: ['latin'] })
-
 export const metadata: Metadata = {
-  title: 'Lottery Tracker',
-  description: 'Track lottery ticket sales by shift',
+  title: 'Lottery Ticketing Dashboard',
+  description: 'Lottery POS and Shift Management',
 }
 
 export default function RootLayout({
@@ -15,8 +13,8 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="en" suppressHydrationWarning>
-      <body className={geist.className} suppressHydrationWarning>
+    <html lang="en" className={poppins.variable} suppressHydrationWarning>
+      <body className="antialiased" suppressHydrationWarning>
         {children}
       </body>
     </html>
